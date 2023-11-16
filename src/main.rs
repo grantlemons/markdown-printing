@@ -16,11 +16,14 @@ enum Token {
     #[token("__")]
     Underline,
 
-    #[regex("#( +)?")]
+    #[regex(r"#( +)?")]
     TopHeader,
 
-    #[regex("#{2,}( +)?")]
+    #[regex(r"#{2,}( +)?")]
     LowerHeader,
+
+    #[regex(r"( ?)\{#*.*\}", priority = 98)]
+    Tag,
 
     #[token("\n")]
     RemovableNewline,
@@ -58,7 +61,8 @@ struct CliArgs {
 
 #[derive(Debug, Default)]
 struct State {
-    header: bool,
+    top_header: bool,
+    lower_header: bool,
     bold: bool,
     italic: bool,
     underline: bool,
@@ -81,13 +85,14 @@ fn main() {
                 Token::Underline => res.extend_from_slice(underline(&mut state)),
                 Token::TopHeader => res.extend_from_slice(top_header(&mut state)),
                 // TODO: lower header formatting (font size)
-                Token::LowerHeader => res.extend_from_slice(top_header(&mut state)),
+                Token::LowerHeader => res.extend_from_slice(lower_header(&mut state)),
                 Token::RemovableNewline => {
                     res.append(&mut new_line(&mut state, Token::RemovableNewline))
                 },
                 Token::ActiveNewline => {
                     res.append(&mut new_line(&mut state, Token::ActiveNewline))
                 },
+                Token::Tag => {}
                 _ => res.extend_from_slice(lex.slice().as_bytes()),
             };
         }
@@ -100,10 +105,15 @@ fn main() {
 fn new_line<'a>(state: &mut State, variant: Token) -> Vec<u8> {
     let mut res = Vec::<u8>::new();
 
-    if state.header {
+    if state.top_header {
         res.extend_from_slice(b"\x1BF\x1Bw0\x1BW0");
 
-        state.header = false;
+        state.top_header = false;
+    }
+    if state.lower_header {
+        res.extend_from_slice(b"\x1Bq0");
+
+        state.lower_header = false;
     }
     if matches!(variant, Token::ActiveNewline) {
         res.push(b'\n');
@@ -156,10 +166,24 @@ fn underline<'a>(state: &mut State) -> &[u8] {
 fn top_header<'a>(state: &mut State) -> &[u8] {
     let res: &[u8];
 
-    if !state.header {
+    if !state.top_header {
         res = b"\n\x1BE\x1Bw1\x1BW1";
 
-        state.header = true;
+        state.top_header = true;
+    } else {
+        res = &[];
+    }
+
+    res
+}
+
+fn lower_header<'a>(state: &mut State) -> &[u8] {
+    let res: &[u8];
+
+    if !state.lower_header {
+        res = b"\x1Bq1";
+
+        state.lower_header = true;
     } else {
         res = &[];
     }
