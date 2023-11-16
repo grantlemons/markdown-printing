@@ -1,11 +1,11 @@
-use std::io::Write;
+use std::fs::{File, OpenOptions};
+use std::io::{Write, Read};
 use std::path::PathBuf;
 
 use clap::Parser;
 use logos::Logos;
 
 #[derive(Logos, Debug)]
-// #[logos(skip r"[ \t\f]+")]
 enum Token {
     #[token("**")]
     Bold,
@@ -16,8 +16,11 @@ enum Token {
     #[token("__")]
     Underline,
 
-    #[regex("(#( +)?)+")]
-    Header,
+    #[regex("#( +)?")]
+    TopHeader,
+
+    #[regex("#{2,}( +)?")]
+    LowerHeader,
 
     #[token("\n")]
     RemovableNewline,
@@ -25,17 +28,29 @@ enum Token {
     #[token("\n\n")]
     ActiveNewline,
 
-    #[regex(r"[A-Za-z0-9. ]+")]
+    #[regex(r"[^(\*\*)\*(__)#\n\r\t\f]")]
     Text,
+
+    #[regex(r"[\-\*+] .+(\n)")]
+    UnorderedList,
+    
+    // #[regex(r"[0-9]\. .+(\n)")]
+    // OrderedList,
+
+    #[regex(r"\[[^\[\]]+\]\([^\(\)]+\)", priority = 99)]
+    Link,
+
+    #[regex(r"(\n)?`{3}[^`]*`{3}(\n)?", priority = 100)]
+    Codeblock,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Clone, Debug)]
 #[command(author, version, about, long_about = None)]
 struct CliArgs {
-    string: Option<String>,
-
-    #[arg(short, long, value_name = "FILE")]
     file: Option<PathBuf>,
+
+    #[arg(short, long)]
+    message: Option<String>,
 
     #[arg(short, long, value_name = "FILE")]
     destination: Option<PathBuf>,
@@ -43,8 +58,7 @@ struct CliArgs {
 
 #[derive(Debug, Default)]
 struct State {
-    double_high: bool,
-    double_wide: bool,
+    header: bool,
     bold: bool,
     italic: bool,
     underline: bool,
@@ -52,51 +66,49 @@ struct State {
 }
 
 fn main() {
+    let args = CliArgs::parse();
+    let input = read_input(args.clone());
+
+    let mut lex = Token::lexer(&input);
     let mut state = State::default();
 
-    let input =
-        "# Lexing Test\n\nHello, **this** is a sample *markdown* string.\n This should be on the same line.\n\n***This should be bold and italic.***\n\n__This should be underlined.__";
-    let mut lex = Token::lexer(input);
-
-    let mut resultant = Vec::<u8>::new();
-
-    for _ in 0..10000 {
-        if let Some(Ok(variant)) = lex.next() {
+    let mut res = Vec::<u8>::new();
+    while let Some(r) = lex.next() {
+        if let Ok(variant) = r {
             match variant {
-                Token::Bold => resultant.extend_from_slice(bold(&mut state)),
-                Token::Italic => resultant.extend_from_slice(italic(&mut state)),
-                Token::Underline => resultant.extend_from_slice(underline(&mut state)),
-                Token::Header => resultant.extend_from_slice(header(&mut state)),
+                Token::Bold => res.extend_from_slice(bold(&mut state)),
+                Token::Italic => res.extend_from_slice(italic(&mut state)),
+                Token::Underline => res.extend_from_slice(underline(&mut state)),
+                Token::TopHeader => res.extend_from_slice(top_header(&mut state)),
+                // TODO: lower header formatting (font size)
+                Token::LowerHeader => res.extend_from_slice(top_header(&mut state)),
                 Token::RemovableNewline => {
-                    resultant.append(&mut new_line(&mut state, Token::RemovableNewline))
-                }
+                    res.append(&mut new_line(&mut state, Token::RemovableNewline))
+                },
                 Token::ActiveNewline => {
-                    resultant.append(&mut new_line(&mut state, Token::ActiveNewline))
-                }
-                Token::Text => resultant.extend_from_slice(lex.slice().as_bytes()),
+                    res.append(&mut new_line(&mut state, Token::ActiveNewline))
+                },
+                _ => res.extend_from_slice(lex.slice().as_bytes()),
             };
         }
     }
+    res.push(b'\n');
 
-    let mut stdout = std::io::stdout();
-    stdout
-        .write_all(resultant.as_slice())
-        .expect("Unable to write to stdout");
-    stdout.flush().expect("Unable to flush buffer");
-    println!();
+    write_output(args, res.as_slice());
 }
 
 fn new_line<'a>(state: &mut State, variant: Token) -> Vec<u8> {
     let mut res = Vec::<u8>::new();
 
-    if state.double_high && state.double_wide {
-        res.extend_from_slice(b"\x1Bw0\x1BW0");
+    if state.header {
+        res.extend_from_slice(b"\x1BF\x1Bw0\x1BW0");
 
-        state.double_high = false;
-        state.double_wide = false;
+        state.header = false;
     }
     if matches!(variant, Token::ActiveNewline) {
-        res.extend_from_slice(b"\n");
+        res.push(b'\n');
+    } else {
+        res.push(b' ')
     }
 
     res
@@ -141,17 +153,51 @@ fn underline<'a>(state: &mut State) -> &[u8] {
     res
 }
 
-fn header<'a>(state: &mut State) -> &[u8] {
+fn top_header<'a>(state: &mut State) -> &[u8] {
     let res: &[u8];
 
-    if !(state.double_high && state.double_wide) {
-        res = b"\n\x1Bw1\x1BW1";
+    if !state.header {
+        res = b"\n\x1BE\x1Bw1\x1BW1";
 
-        state.double_high = true;
-        state.double_wide = true;
+        state.header = true;
     } else {
         res = &[];
     }
 
     res
+}
+
+fn read_input(args: CliArgs) -> String {
+    let mut input: String = String::new();
+    if let Some(filebuf) = args.file {
+        let display_path = filebuf.display();
+        let mut file = match File::open(&filebuf) {
+            Ok(file) => file,
+            Err(e) => panic!("Could not open {}: {}", display_path, e),
+        };
+        if let Err(e) = file.read_to_string(&mut input) {
+            panic!("Cannot read from input {}: {}", display_path, e);
+        }
+    } else if let Some(string) = args.message {
+        input = string;
+    } else {
+        panic!("Must provide an input source.");
+    }
+
+    input
+}
+
+fn write_output(args: CliArgs, slice: &[u8]) {
+    let mut file: Box<dyn Write> = if let Some(filebuf) = args.destination {
+        let display_path = filebuf.display();
+        let local_file = match OpenOptions::new().write(true).create(true).open(&filebuf) {
+            Ok(file) => file,
+            Err(e) => panic!("Could not open {} for writing: {}", display_path, e),
+        };
+        Box::new(local_file)
+    } else {
+        Box::new(std::io::stdout())
+    };
+
+    file.write_all(slice).unwrap();
 }
