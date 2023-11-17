@@ -147,7 +147,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "markdown-printing"
+name = "mdtoepson"
 version = "0.1.0"
 dependencies = [
  "clap",

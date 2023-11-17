@@ -1,9 +1,43 @@
 use std::fs::{File, OpenOptions};
-use std::io::{Write, Read};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 use clap::Parser;
 use logos::Logos;
+
+macro_rules! def_wrap_env {
+    ($name:ident, $fname:ident, $pre:tt, $post:tt) => {
+        fn $name<'a>(state: &mut State) -> &'a [u8] {
+            let res = if !state.$fname { $pre } else { $post };
+            state.$fname = !state.$fname;
+            return res;
+        }
+    };
+}
+macro_rules! def_open_env {
+    ($name:ident, $fname:ident, $pre:tt) => {
+        fn $name<'a>(state: &mut State) -> &'a [u8] {
+            if !state.$fname {
+                state.$fname = true;
+                $pre
+            } else {
+                &[]
+            }
+        }
+    };
+}
+macro_rules! def_close_env {
+    ($name:ident, $fname:ident, $post:tt) => {
+        fn $name<'a>(state: &mut State) -> &'a [u8] {
+            if !state.$fname {
+                &[]
+            } else {
+                state.$fname = false;
+                $post
+            }
+        }
+    };
+}
 
 #[derive(Logos, Debug)]
 enum Token {
@@ -36,10 +70,9 @@ enum Token {
 
     #[regex(r"[\-\*+] .+(\n)")]
     UnorderedList,
-    
+
     // #[regex(r"[0-9]\. .+(\n)")]
     // OrderedList,
-
     #[regex(r"\[[^\[\]]+\]\([^\(\)]+\)", priority = 99)]
     Link,
 
@@ -69,6 +102,14 @@ struct State {
     // double_strike: bool,
 }
 
+def_wrap_env!(wrap_bold, bold, b"\x1BE", b"\x1BF");
+def_wrap_env!(wrap_italic, italic, b"\x1B4", b"\x1B5");
+def_wrap_env!(wrap_underline, underline, b"\x1B-1", b"\x1B-0");
+def_open_env!(open_top_header, top_header, b"\n\x1BE\x1Bw1\x1BW1");
+def_open_env!(open_lower_header, lower_header, b"\x1Bq1");
+def_close_env!(close_top_header, top_header, b"\n\x1BF\x1Bw0\x1BW0");
+def_close_env!(close_lower_header, lower_header, b"\x1Bq0");
+
 fn main() {
     let args = CliArgs::parse();
     let input = read_input(args.clone());
@@ -80,18 +121,16 @@ fn main() {
     while let Some(r) = lex.next() {
         if let Ok(variant) = r {
             match variant {
-                Token::Bold => res.extend_from_slice(bold(&mut state)),
-                Token::Italic => res.extend_from_slice(italic(&mut state)),
-                Token::Underline => res.extend_from_slice(underline(&mut state)),
-                Token::TopHeader => res.extend_from_slice(top_header(&mut state)),
+                Token::Bold => res.extend_from_slice(wrap_bold(&mut state)),
+                Token::Italic => res.extend_from_slice(wrap_italic(&mut state)),
+                Token::Underline => res.extend_from_slice(wrap_underline(&mut state)),
+                Token::TopHeader => res.extend_from_slice(open_top_header(&mut state)),
                 // TODO: lower header formatting (font size)
-                Token::LowerHeader => res.extend_from_slice(lower_header(&mut state)),
+                Token::LowerHeader => res.extend_from_slice(open_lower_header(&mut state)),
                 Token::RemovableNewline => {
                     res.append(&mut new_line(&mut state, Token::RemovableNewline))
-                },
-                Token::ActiveNewline => {
-                    res.append(&mut new_line(&mut state, Token::ActiveNewline))
-                },
+                }
+                Token::ActiveNewline => res.append(&mut new_line(&mut state, Token::ActiveNewline)),
                 Token::Tag => {}
                 _ => res.extend_from_slice(lex.slice().as_bytes()),
             };
@@ -105,87 +144,13 @@ fn main() {
 fn new_line<'a>(state: &mut State, variant: Token) -> Vec<u8> {
     let mut res = Vec::<u8>::new();
 
-    if state.top_header {
-        res.extend_from_slice(b"\x1BF\x1Bw0\x1BW0");
+    res.extend_from_slice(close_top_header(state));
+    res.extend_from_slice(close_lower_header(state));
 
-        state.top_header = false;
-    }
-    if state.lower_header {
-        res.extend_from_slice(b"\x1Bq0");
-
-        state.lower_header = false;
-    }
     if matches!(variant, Token::ActiveNewline) {
         res.push(b'\n');
     } else {
         res.push(b' ')
-    }
-
-    res
-}
-
-fn bold<'a>(state: &mut State) -> &[u8] {
-    let res;
-    if !state.bold {
-        res = b"\x1BE";
-    } else {
-        res = b"\x1BF";
-    }
-
-    state.bold = !state.bold;
-
-    res
-}
-
-fn italic<'a>(state: &mut State) -> &[u8] {
-    let res;
-    if !state.italic {
-        res = b"\x1B4";
-    } else {
-        res = b"\x1B5";
-    }
-
-    state.italic = !state.italic;
-
-    res
-}
-
-fn underline<'a>(state: &mut State) -> &[u8] {
-    let res;
-    if !state.underline {
-        res = b"\x1B-1";
-    } else {
-        res = b"\x1B-0";
-    }
-
-    state.underline = !state.underline;
-
-    res
-}
-
-fn top_header<'a>(state: &mut State) -> &[u8] {
-    let res: &[u8];
-
-    if !state.top_header {
-        res = b"\n\x1BE\x1Bw1\x1BW1";
-
-        state.top_header = true;
-    } else {
-        res = &[];
-    }
-
-    res
-}
-
-fn lower_header<'a>(state: &mut State) -> &[u8] {
-    let res: &[u8];
-
-    if !state.lower_header {
-        res = b"\x1Bq1";
-
-        state.lower_header = true;
-    } else {
-        res = &[];
     }
 
     res
