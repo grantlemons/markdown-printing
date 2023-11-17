@@ -104,10 +104,10 @@ struct State {
 def_wrap_env!(wrap_bold, bold, b"\x1BE", b"\x1BF");
 def_wrap_env!(wrap_italic, italic, b"\x1B4", b"\x1B5");
 def_wrap_env!(wrap_underline, underline, b"\x1B-1", b"\x1B-0");
-def_open_env!(open_top_header, top_header, b"\n\x1BE\x1Bw1\x1BW1");
-def_close_env!(close_top_header, top_header, b"\n\x1BF\x1Bw0\x1BW0");
-def_open_env!(open_lower_header, lower_header, b"\n\x1Bw1");
-def_close_env!(close_lower_header, lower_header, b"\n\x1Bw0");
+def_open_env!(open_top_header, top_header, b"\n\n\x1BE\x1Bw1\x1BW1");
+def_close_env!(close_top_header, top_header, b"\n\n\x1BF\x1Bw0\x1BW0");
+def_open_env!(open_lower_header, lower_header, b"\n\n\x1Bw1");
+def_close_env!(close_lower_header, lower_header, b"\n\n\x1Bw0");
 
 fn main() {
     let args = CliArgs::parse();
