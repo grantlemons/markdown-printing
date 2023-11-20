@@ -62,7 +62,7 @@ enum Token {
     #[token("\n")]
     RemovableNewline,
 
-    #[token("\n\n")]
+    #[token("\n{2,}")]
     ActiveNewline,
 
     #[regex(r"[^(\*\*)\*(__)#\n\r\t\f]")]
@@ -105,14 +105,20 @@ def_wrap_env!(wrap_bold, bold, b"\x1BE", b"\x1BF");
 def_wrap_env!(wrap_italic, italic, b"\x1B4", b"\x1B5");
 def_wrap_env!(wrap_underline, underline, b"\x1B-1", b"\x1B-0");
 def_open_env!(open_top_header, top_header, b"\n\n\x1BE\x1Bw1\x1BW1");
-def_close_env!(close_top_header, top_header, b"\n\n\x1BF\x1Bw0\x1BW0");
+def_close_env!(close_top_header, top_header, b"\x1BF\x1Bw0\x1BW0\n");
 def_open_env!(open_lower_header, lower_header, b"\n\n\x1Bw1");
-def_close_env!(close_lower_header, lower_header, b"\n\n\x1Bw0");
+def_close_env!(close_lower_header, lower_header, b"\x1Bw0\n");
 
 fn main() {
     let args = CliArgs::parse();
     let input = read_input(args.clone());
 
+    let res = transpile_markdown(&input);
+
+    write_output(args, res.as_slice());
+}
+
+fn transpile_markdown(input: &str) -> Vec<u8> {
     let mut lex = Token::lexer(&input);
     let mut state = State::default();
 
@@ -137,7 +143,7 @@ fn main() {
     }
     res.push(b'\n');
 
-    write_output(args, res.as_slice());
+    res
 }
 
 fn new_line(state: &mut State, variant: Token) -> Vec<u8> {
@@ -188,4 +194,72 @@ fn write_output(args: CliArgs, slice: &[u8]) {
     };
 
     file.write_all(slice).unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_line_removes_single_newlines() {
+        let mut state = State::default();
+
+        let res = new_line(&mut state, Token::RemovableNewline);
+
+        assert_eq!(res, &[b' ']);
+    }
+
+    #[test]
+    fn new_line_collapses_multiple_newlines() {
+        let mut state = State::default();
+
+        let res = new_line(&mut state, Token::ActiveNewline);
+
+        assert_eq!(res, &[b'\n']);
+    }
+
+    #[test]
+    fn bold_transpiles() {
+        let input = "**bold text**";
+        let expected_output = b"\x1BEbold text\x1BF\n";
+        let res = transpile_markdown(&input);
+
+        assert_eq!(res.as_slice(), expected_output)
+    }
+
+    #[test]
+    fn italic_transpiles() {
+        let input = "*italic text*";
+        let expected_output = b"\x1B4italic text\x1B5\n";
+        let res = transpile_markdown(&input);
+
+        assert_eq!(res.as_slice(), expected_output)
+    }
+
+    #[test]
+    fn underlined_transpiles() {
+        let input = "__underlined text__";
+        let expected_output = b"\x1B-1underlined text\x1B-0\n";
+        let res = transpile_markdown(&input);
+
+        assert_eq!(res.as_slice(), expected_output)
+    }
+
+    #[test]
+    fn top_header_transpiles() {
+        let input = "# Header text\n";
+        let expected_output = b"\n\n\x1BE\x1Bw1\x1BW1Header text\x1BF\x1Bw0\x1BW0\n\n";
+        let res = transpile_markdown(&input);
+
+        assert_eq!(res.as_slice(), expected_output)
+    }
+
+    #[test]
+    fn lower_header_transpiles() {
+        let input = "## Header text\n";
+        let expected_output = b"\n\n\x1Bw1Header text\x1Bw0\n";
+        let res = transpile_markdown(&input);
+
+        assert_eq!(res.as_slice(), expected_output)
+    }
 }
