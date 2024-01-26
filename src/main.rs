@@ -62,7 +62,7 @@ enum Token {
     #[token("\n")]
     RemovableNewline,
 
-    #[token("\n{2,}")]
+    #[regex(r"\n{2,}|\\\\")]
     ActiveNewline,
 
     #[regex(r"[^(\*\*)\*(__)#\n\r\t\f]")]
