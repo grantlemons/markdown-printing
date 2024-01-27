@@ -1,7 +1,7 @@
 [package]
 name = "mdtoepson"
 description = "Filter to change from markdown format to Epson ESC codes for my Panasonic KX-2123."
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Grant Lemons <grantlemons@aol.com>"]
 license = "GPL-3.0"
